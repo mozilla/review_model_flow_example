@@ -13,6 +13,7 @@ from metaflow import (
     step,
     environment,
     kubernetes,
+    pypi
 )
 from metaflow.cards import Markdown
 
@@ -60,13 +61,13 @@ class TemplateFlow(FlowSpec):
             "WANDB_PROJECT": os.getenv("WANDB_PROJECT"),
         }
     )
-    # You can uncomment and adjust this decorator to scale your flow remotely with a custom image.
-    # Note: the image parameter must be a fully qualified registry path otherwise Metaflow will default to
-    # the AWS public registry.
-    # The image referenced HERE is the mozmlops demo image,
-    # which has both the dependencies you need run this template flow:
-    # scikit-learn (for the specific model called in this demo) and mozmlops (for all your ops tools).
-    @kubernetes(image="registry.hub.docker.com/chelseatroy/mozmlops:latest", cpu=1)
+    @pypi(python="3.10.8",
+          packages={
+            "scikit-learn": "1.5.0",
+            "matplotlib": "3.8.0",
+            "wandb": "0.18.1",
+            })
+    @kubernetes(image="registry.hub.docker.com/dexterp37/mlops-copilot-demo:v3", gpu=1)
     @step
     def train(self):
         """
@@ -80,7 +81,7 @@ class TemplateFlow(FlowSpec):
         from sklearn.datasets import load_iris
         from sklearn.model_selection import train_test_split
         from sklearn.linear_model import LogisticRegression
-        from mozmlops.cloud_storage_api_client import CloudStorageAPIClient  # noqa: F401
+        # from mozmlops.cloud_storage_api_client import CloudStorageAPIClient  # noqa: F401
 
         # This can help you fetch and upload artifacts to
         # GCS. Check out help(CloudStorageAPIClient) for more details.
