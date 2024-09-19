@@ -1,9 +1,9 @@
 mozmlops==0.1.4
-scikit-learn==1.5.0 # Needed only for the example model in this template flow
+scikit-learn==1.5.0 # Needed only for the example model in the template flow
 
-#dependencies specifically for the example model
-torch==2.4.1
-matplotlib
-datasets
-tqdm
-transformers
+#dependencies specifically for the sentiment analysis model
+wandb==0.17.8
+datasets==3.0.0
+numpy==1.26.4
+tqdm==4.66.5
+transformers==4.44.2

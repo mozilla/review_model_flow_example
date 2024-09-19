@@ -51,16 +51,7 @@ class ReviewSentimentFlow(FlowSpec):
             "WANDB_PROJECT": os.getenv("WANDB_PROJECT"),
         }
     )
-    @pypi(python="3.10.8",
-          packages={
-            "scikit-learn": "1.5.0",
-            "wandb": "0.18.1",
-            "datasets": "3.0.0",
-            "numpy": "2.1.1",
-            "tqdm": "4.66.5",
-            "transformers": "4.44.2",
-            })
-    @kubernetes(image="registry.hub.docker.com/dexterp37/mlops-copilot-demo:v3", gpu=1)
+    @kubernetes(image="registry.hub.docker.com/chelseatroy/review-model-image:latest", gpu=1)
     @step
     def train(self):
         """
