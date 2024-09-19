@@ -13,9 +13,11 @@ from metaflow import (
     step,
     environment,
     kubernetes,
+    pypi,
     nvidia,
 )
 from metaflow.cards import Markdown
+
 
 class ReviewSentimentFlow(FlowSpec):
     """
@@ -37,8 +39,8 @@ class ReviewSentimentFlow(FlowSpec):
     # This is meant for small files—in this example, a bit of config.
     example_config = IncludeFile("example_config", default="./example_config.json")
 
-
     @card(type="default")
+    @kubernetes
     @step
     def start(self):
         """
@@ -57,7 +59,16 @@ class ReviewSentimentFlow(FlowSpec):
             "WANDB_PROJECT": os.getenv("WANDB_PROJECT"),
         }
     )
-    @kubernetes(image="registry.hub.docker.com/chelseatroy/review-model-image:latest", gpu=1)
+    @pypi(python='3.10.8',
+          packages={
+              'torch': '2.4.1',
+              'wandb': '0.17.8',
+              'datasets': '3.0.0',
+              'numpy': '1.26.4',
+              'tqdm': '4.66.5',
+              'transformers': '4.44.2',
+          })
+    @nvidia
     @step
     def train_model(self):
         """
@@ -276,6 +287,7 @@ class ReviewSentimentFlow(FlowSpec):
 
         self.next(self.end)
 
+    @kubernetes
     @step
     def end(self):
         """
