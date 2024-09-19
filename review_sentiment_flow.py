@@ -16,8 +16,10 @@ from metaflow import (
     pypi,
     nvidia,
 )
-from metaflow.cards import Markdown
 
+GCS_PROJECT_NAME = "moz-fx-mlops-inference-nonprod"
+GCS_BUCKET_NAME = "mf-models-test1"
+MODEL_STORAGE_PATH = "ctroy-example-flow/model-bytes.pth"
 
 class ReviewSentimentFlow(FlowSpec):
     """
@@ -86,6 +88,8 @@ class ReviewSentimentFlow(FlowSpec):
         import torch.optim as optim
         import tqdm
         import transformers
+
+        from io import BytesIO
 
         config_as_dict = json.loads(self.example_config)
         print(f"The config file says: {config_as_dict.get('example_key')}")
@@ -270,6 +274,33 @@ class ReviewSentimentFlow(FlowSpec):
         test_loss, test_acc = evaluate(test_data_loader, model, criterion, device)
         print(f"test_loss: {test_loss:.3f}, test_acc: {test_acc:.3f}")
 
+        self.model = model
+        self.tokenizer = tokenizer
+        self.device = device
+
+        buffer = BytesIO()
+        torch.save(model.state_dict(), buffer)
+        self.model_state_dict_bytes = buffer.getvalue()
+
+        self.next(self.error_analysis)
+
+    @pypi(python='3.10.8',
+          packages={
+              'torch': '2.4.1',
+              'wandb': '0.17.8',
+          })
+    @kubernetes
+    @step
+    def error_analysis(self):
+        """
+        Predict the sentiment of some sample movie reviews and see,
+        on an individual level, how they look
+        """
+        import torch
+
+        model = self.model
+        tokenizer = self.tokenizer
+        device = self.device
         def predict_sentiment(text, model, tokenizer, device):
             ids = tokenizer(text)["input_ids"]
             tensor = torch.LongTensor(ids).unsqueeze(dim=0).to(device)
@@ -279,12 +310,37 @@ class ReviewSentimentFlow(FlowSpec):
             predicted_probability = probability[predicted_class].item()
             return predicted_class, predicted_probability
 
+        print("(Clearly these are toy examples; one could load a batch of examples here for more rigorous error analysis)")
+
         text = "This film is terrible!"
+        print(f"Analysis of text: {text}")
         print(predict_sentiment(text, model, tokenizer, device))
 
         text = "This film is not terrible, it's great!"
+        print(f"Analysis of text: {text}")
         print(predict_sentiment(text, model, tokenizer, device))
 
+        text = "This film is not terrible, it's great!"
+        print(f"Analysis of text: {text}")
+        print(predict_sentiment(text, model, tokenizer, device))
+
+        self.next(self.upload_model_to_gcs)
+
+    @pypi(python='3.10.8',
+          packages={
+              'mozmlops': '0.1.4'
+          })
+    @kubernetes
+    @step
+    def upload_model_to_gcs(self):
+        from mozmlops.cloud_storage_api_client import CloudStorageAPIClient
+
+        print(f"Uploading model to gcs")
+        # init client
+        storage_client = CloudStorageAPIClient(
+            project_name=GCS_PROJECT_NAME, bucket_name=GCS_BUCKET_NAME
+        )
+        storage_client.store(data=self.model_state_dict_bytes, storage_path=MODEL_STORAGE_PATH)
         self.next(self.end)
 
     @kubernetes
