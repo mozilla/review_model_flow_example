@@ -13,14 +13,15 @@ from metaflow import (
     step,
     environment,
     kubernetes,
-    pypi
+    nvidia,
 )
 from metaflow.cards import Markdown
 
 class ReviewSentimentFlow(FlowSpec):
     """
-    This flow is a template for you to use
-    for orchestration of your model.
+    A sample flow demonstrating
+    The use of custom docker images and GPU facilities
+    to train a biggish machine learning model (i.e. not a toy example on the iris dataset).
     """
 
     # This is an example of a parameter. You can toggle this when you call the flow
@@ -32,6 +33,11 @@ class ReviewSentimentFlow(FlowSpec):
         default=True,
     )
 
+    # You can import the contents of files from your file system to use in flows.
+    # This is meant for small files—in this example, a bit of config.
+    example_config = IncludeFile("example_config", default="./example_config.json")
+
+
     @card(type="default")
     @step
     def start(self):
@@ -41,7 +47,7 @@ class ReviewSentimentFlow(FlowSpec):
         You can use it for collecting/preprocessing data or other setup tasks.
         """
 
-        self.next(self.train)
+        self.next(self.train_model)
 
     @card
     @environment(
@@ -53,12 +59,10 @@ class ReviewSentimentFlow(FlowSpec):
     )
     @kubernetes(image="registry.hub.docker.com/chelseatroy/review-model-image:latest", gpu=1)
     @step
-    def train(self):
+    def train_model(self):
         """
-        In this step you can train your model,
-        save checkpoints and artifacts,
-        and deliver data to Weights and Biases
-        for experiment evaluation
+        Trains a transformer model on movie reviews
+        using NVIDIA GPUs
         """
         import json
         import wandb
@@ -94,8 +98,12 @@ class ReviewSentimentFlow(FlowSpec):
 
         train_data, test_data = datasets.load_dataset("imdb", split=["train", "test"])
         transformer_name = "bert-base-uncased"
-
         tokenizer = transformers.AutoTokenizer.from_pretrained(transformer_name)
+
+        print(tokenizer.tokenize("hello world!"))
+        print(tokenizer.encode("hello world!"))
+        print(tokenizer.convert_ids_to_tokens(tokenizer.encode("hello world")))
+        print(tokenizer("hello world!"))
 
         def tokenize_and_numericalize_example(example, tokenizer):
             ids = tokenizer(example["text"], truncation=True)["input_ids"]
@@ -107,7 +115,11 @@ class ReviewSentimentFlow(FlowSpec):
         test_data = test_data.map(
             tokenize_and_numericalize_example, fn_kwargs={"tokenizer": tokenizer}
         )
+
+        print(train_data[0])
+
         test_size = 0.25
+        pad_index = tokenizer.pad_token_id
 
         train_valid_data = train_data.train_test_split(test_size=test_size)
         train_data = train_valid_data["train"]
@@ -166,6 +178,7 @@ class ReviewSentimentFlow(FlowSpec):
                 cls_hidden = hidden[:, 0, :]
                 prediction = self.fc(torch.tanh(cls_hidden))
                 # prediction = [batch size, output dim]
+                return prediction
 
         transformer = transformers.AutoModel.from_pretrained(transformer_name)
         output_dim = len(train_data["label"].unique())
