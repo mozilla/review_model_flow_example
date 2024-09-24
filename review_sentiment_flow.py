@@ -20,6 +20,7 @@ from metaflow import (
 GCS_PROJECT_NAME = "moz-fx-mlops-inference-nonprod"
 GCS_BUCKET_NAME = "mf-models-test1"
 MODEL_STORAGE_PATH = "ctroy-example-flow/model-bytes.pth"
+TOKENIZER_STORAGE_PATH = "models/tokenizer/"
 
 class ReviewSentimentFlow(FlowSpec):
     """
@@ -69,6 +70,7 @@ class ReviewSentimentFlow(FlowSpec):
               'numpy': '1.26.4',
               'tqdm': '4.66.5',
               'transformers': '4.44.2',
+              'mozmlops': '0.1.4',
           })
     @nvidia
     @step
@@ -88,8 +90,10 @@ class ReviewSentimentFlow(FlowSpec):
         import torch.optim as optim
         import tqdm
         import transformers
+        import json
 
         from io import BytesIO
+        from review_sentiment_model import ReviewSentimentModel
 
         config_as_dict = json.loads(self.example_config)
         print(f"The config file says: {config_as_dict.get('example_key')}")
@@ -173,33 +177,11 @@ class ReviewSentimentFlow(FlowSpec):
         valid_data_loader = get_data_loader(valid_data, batch_size, pad_index)
         test_data_loader = get_data_loader(test_data, batch_size, pad_index)
 
-        class Transformer(nn.Module):
-            def __init__(self, transformer, output_dim, freeze):
-                super().__init__()
-                self.transformer = transformer
-                hidden_dim = transformer.config.hidden_size
-                self.fc = nn.Linear(hidden_dim, output_dim)
-                if freeze:
-                    for param in self.transformer.parameters():
-                        param.requires_grad = False
-
-            def forward(self, ids):
-                # ids = [batch size, seq len]
-                output = self.transformer(ids, output_attentions=True)
-                hidden = output.last_hidden_state
-                # hidden = [batch size, seq len, hidden dim]
-                attention = output.attentions[-1]
-                # attention = [batch size, n heads, seq len, seq len]
-                cls_hidden = hidden[:, 0, :]
-                prediction = self.fc(torch.tanh(cls_hidden))
-                # prediction = [batch size, output dim]
-                return prediction
-
         transformer = transformers.AutoModel.from_pretrained(transformer_name)
         output_dim = len(train_data["label"].unique())
         freeze = False
 
-        model = Transformer(transformer, output_dim, freeze)
+        model = ReviewSentimentModel(transformer, output_dim, freeze)
         lr = 1e-5
 
         optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -274,13 +256,15 @@ class ReviewSentimentFlow(FlowSpec):
         test_loss, test_acc = evaluate(test_data_loader, model, criterion, device)
         print(f"test_loss: {test_loss:.3f}, test_acc: {test_acc:.3f}")
 
-        self.model = model
-        self.tokenizer = tokenizer
         self.device = device
-
         buffer = BytesIO()
         torch.save(model.state_dict(), buffer)
         self.model_state_dict_bytes = buffer.getvalue()
+
+        self.tokenizer_as_dict = {}
+        tokenizer.save("tokenizer.json")
+        with open('tokenizer.json') as file:
+            self.tokenizer_as_dict = json.load(file)
 
         self.next(self.error_analysis)
 
@@ -288,6 +272,7 @@ class ReviewSentimentFlow(FlowSpec):
           packages={
               'torch': '2.4.1',
               'wandb': '0.17.8',
+              'transformers' : '4.44.2',
           })
     @kubernetes
     @step
@@ -297,10 +282,22 @@ class ReviewSentimentFlow(FlowSpec):
         on an individual level, how they look
         """
         import torch
+        from transformers import DistilBertTokenizer
 
-        model = self.model
-        tokenizer = self.tokenizer
+        from io import BytesIO
+
         device = self.device
+
+        import json
+        with open('tokenizer.json', 'w') as fp:
+            json.dump(self.tokenizer_as_dict, fp)
+
+        tokenizer = DistilBertTokenizer.from_file("tokenizer.json")
+
+        model = ReviewSentimentFlow()
+        buffer = BytesIO(self.model_state_dict_bytes)
+        model.load_state_dict(torch.load(buffer, map_location=device, weights_only=True))
+
         def predict_sentiment(text, model, tokenizer, device):
             ids = tokenizer(text)["input_ids"]
             tensor = torch.LongTensor(ids).unsqueeze(dim=0).to(device)
