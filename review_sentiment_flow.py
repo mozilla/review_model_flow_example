@@ -15,6 +15,7 @@ from metaflow import (
     kubernetes,
     pypi,
     nvidia,
+    retry,
 )
 
 GCS_PROJECT_NAME = "moz-fx-mlops-inference-nonprod"
@@ -58,7 +59,6 @@ class ReviewSentimentFlow(FlowSpec):
     @environment(
         vars={
             "WANDB_API_KEY": os.getenv("WANDB_API_KEY"),
-            "WANDB_ENTITY": os.getenv("WANDB_ENTITY"),
             "WANDB_PROJECT": os.getenv("WANDB_PROJECT"),
         }
     )
@@ -73,6 +73,7 @@ class ReviewSentimentFlow(FlowSpec):
               'mozmlops': '0.1.4',
           })
     @nvidia
+    @retry
     @step
     def train_model(self):
         """
@@ -94,6 +95,7 @@ class ReviewSentimentFlow(FlowSpec):
 
         from io import BytesIO
         from review_sentiment_model import ReviewSentimentModel
+        from os.path import isfile, join
 
         config_as_dict = json.loads(self.example_config)
         print(f"The config file says: {config_as_dict.get('example_key')}")
@@ -178,10 +180,10 @@ class ReviewSentimentFlow(FlowSpec):
         test_data_loader = get_data_loader(test_data, batch_size, pad_index)
 
         transformer = transformers.AutoModel.from_pretrained(transformer_name)
-        output_dim = len(train_data["label"].unique())
+        self.output_dim = len(train_data["label"].unique())
         freeze = False
 
-        model = ReviewSentimentModel(transformer, output_dim, freeze)
+        model = ReviewSentimentModel(transformer, self.output_dim, freeze)
         lr = 1e-5
 
         optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -262,8 +264,9 @@ class ReviewSentimentFlow(FlowSpec):
         self.model_state_dict_bytes = buffer.getvalue()
 
         self.tokenizer_as_dict = {}
-        tokenizer.save("tokenizer.json")
-        with open('tokenizer.json') as file:
+        tokenizer.save_pretrained("tok")
+
+        with open('tok/tokenizer.json') as file:
             self.tokenizer_as_dict = json.load(file)
 
         self.next(self.error_analysis)
@@ -272,7 +275,7 @@ class ReviewSentimentFlow(FlowSpec):
           packages={
               'torch': '2.4.1',
               'wandb': '0.17.8',
-              'transformers' : '4.44.2',
+              'tokenizers' : '0.20.0',
           })
     @kubernetes
     @step
@@ -282,19 +285,20 @@ class ReviewSentimentFlow(FlowSpec):
         on an individual level, how they look
         """
         import torch
-        from transformers import DistilBertTokenizer
+        from tokenizers import Tokenizer
+        from review_sentiment_model import ReviewSentimentModel
 
         from io import BytesIO
+        import json
 
         device = self.device
 
-        import json
         with open('tokenizer.json', 'w') as fp:
             json.dump(self.tokenizer_as_dict, fp)
 
-        tokenizer = DistilBertTokenizer.from_file("tokenizer.json")
+        tokenizer = Tokenizer.from_file("tokenizer.json")
 
-        model = ReviewSentimentFlow()
+        model = ReviewSentimentModel(tokenizer, self.output_dim, False)
         buffer = BytesIO(self.model_state_dict_bytes)
         model.load_state_dict(torch.load(buffer, map_location=device, weights_only=True))
 
