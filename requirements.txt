@@ -6,4 +6,4 @@ wandb==0.17.8
 datasets==3.0.0
 numpy==1.26.4
 tqdm==4.66.5
-transformers==4.44.2
+transformers==4.50.0
